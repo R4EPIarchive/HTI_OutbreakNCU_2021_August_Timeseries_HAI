@@ -1,0 +1,455 @@
+---
+title: "Haiti Neonatal Sepsis Plotting Notebook"
+#output:
+#  pdf_document: default
+#  html_notebook: default
+---
+
+```{r loadlib, echo=T, results='hide', message=F, warning=F}
+library(fpp3)
+library(magrittr)
+library(dplyr)
+library(aweek)
+library(openxlsx)
+library(surveillance)
+library(grid)
+library(gridExtra)
+```
+
+
+We filter the time series and take only data between July 2014 to January 2018.
+
+```{r, message=F}
+
+
+# Load data frame, data frame with updated microbiology and data frame with updated sepsis information
+df <- read.xlsx('data/data.xlsx')
+df2 <- read.xlsx('data/data_micro_update.xlsx')
+dfs <- read.xlsx('data/data_sepsis_update.xlsx')
+
+
+# Transform epi week into dates
+df <- df %>% mutate(date= week2date(epiwk))
+df2 <- df2 %>% mutate(date= week2date(epiwk))
+dfs <- dfs%>% mutate(date= week2date(epiwk))
+
+# Rename antibiotic columns
+df <- df %>% mutate(ab1 = ampi_total+genta_total, 
+                    ab2= cefta_total,
+                    ab3 = amik_total,
+                    ab4 =  mero_total)
+
+# Only use data between July 2014 and the end of 2017
+df <- df %>% filter(between(date, as.Date('2014-07-01'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+df2 <- df2 %>% filter(between(date, as.Date('2014-07-01'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+dfs <-  dfs %>% filter(between(date, as.Date('2014-07-01'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+
+
+# Define the time series objects and the moving averages of relevant quantities
+TSs <- df %>% as_tsibble()
+TSss <- dfs %>% as_tsibble()
+TSs2 <- df2 %>% as_tsibble()
+
+
+TSs <- TSs  %>% mutate(
+    ma_neo_adm = slider::slide_dbl(neo_adm, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSs <- TSs  %>% mutate(
+    ma_mat_normal_preg = slider::slide_dbl(mat_normal_preg, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSs <- TSs  %>% mutate(
+    ma_mat_exit = slider::slide_dbl(mat_exit, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSs <- TSs  %>% mutate(
+    ma_neo_exit = slider::slide_dbl(neo_exit, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSs <- TSs  %>% mutate(
+    ma_neo_death = slider::slide_dbl(neo_death, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSs <- TSs  %>% mutate(
+    ab0 = slider::slide_dbl(ampi_total, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSs <- TSs  %>% mutate(
+    ab1 = slider::slide_dbl(genta_total, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSs <- TSs  %>% mutate(
+    ab2 = slider::slide_dbl(mero_total, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSs <- TSs  %>% mutate(
+    ab3 = slider::slide_dbl(cefta_total, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSs <- TSs  %>% mutate(
+    ab4 = slider::slide_dbl(amik_total, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSs2 <- TSs2  %>% mutate(
+    ma_gn_bc_sample = slider::slide_dbl(gn_bc_sample, mean,
+                .before = 2, .after = 2, .complete = TRUE))
+
+TSss <- TSss  %>% mutate(
+    ma_sepsis_los_adm = slider::slide_dbl(sepsis_los_adm, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+TSss$ma_neo_adm <-  TSs$ma_neo_adm
+TSss$neo_adm <-  TSs$neo_adm
+
+
+```
+
+
+These are the plots for Figure 1 and Figure 2 in the paper, a preview is shown.
+
+```{r, message=F, warning=F}
+
+
+plot_neo_adm <- TSs %>% 
+  autoplot(ma_neo_adm, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = neo_adm), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Neonatal admissions (n)")+
+  xlab("")+ theme(legend.position = "none", axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_neo_adm
+
+
+plot_maternal_exit <- TSs %>% 
+  autoplot(ma_mat_exit, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = mat_exit), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Maternal exits (n)")+
+  xlab("Date") 
+plot_maternal_exit
+
+plot_maternal_normal <- TSs %>% 
+  autoplot(ma_mat_normal_preg, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = mat_normal_preg), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Normal pregnancy admissions (n)")+
+  xlab("") + theme(legend.position = c(0.2, 0.8), axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_maternal_normal
+
+plot_neo_mortality <- TSs %>% 
+  autoplot(ma_neo_death/ma_neo_exit, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = neo_death/neo_exit), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Mortality (%)")+
+  xlab("Date") 
+plot_neo_mortality
+
+plot_sepsis_los <- TSss %>% 
+  autoplot(ma_sepsis_los_adm, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9))) +
+  geom_line(aes(y = sepsis_los_adm), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("LO sepsis cases (n)")+
+  xlab("") + theme(legend.position = c(0.2, 0.8), axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_sepsis_los
+
+plot_sepsis_los_rate <- TSss %>% 
+  autoplot(ma_sepsis_los_adm/ma_neo_adm, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9))) +
+  geom_line(aes(y = sepsis_los_adm/neo_adm), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("LO sepsis rate (%)")+
+  xlab("") + theme(legend.position = c(0.2, 0.8), axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_sepsis_los_rate
+
+
+
+
+
+
+
+plot_blood <- TSs2 %>% 
+  autoplot(ma_gn_bc_sample, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = gn_bc_sample), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="1 year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("GNB positive blood cultures (n)")+
+  xlab("") + theme(legend.position = "none", axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_blood
+
+
+plot_ab0 <- TSs %>% 
+  autoplot(ab0, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = ampi_total), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Ampicillin consumption (n)")+
+  xlab("") + theme(legend.position = "none", axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_ab0
+
+plot_ab1 <- TSs %>% 
+  autoplot(ab1, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = genta_total), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Gentamicin consumption (n)")+
+  xlab("") + theme(legend.position = "none", axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_ab1
+
+plot_ab2 <- TSs %>% 
+  autoplot(ab2, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = mero_total), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Meropenem consumption (n)")+
+  xlab("") + theme(legend.position = "none", axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+plot_ab2
+
+plot_ab3 <- TSs %>% 
+  autoplot(ab3, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = cefta_total), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Ceftazidime consumptio (n)")+
+  xlab("Date") 
+plot_ab3
+
+plot_ab4 <- TSs %>% 
+  autoplot(ab4, size = 1.2, pal=(viridisLite::inferno(begin=0.2, end=0.9, n=9)) ) +
+  geom_line(aes(y = amik_total), size=0.3) +
+  scale_x_date(date_labels="%Y",date_breaks  ="year", limits=c(as.Date('2013/12/15'), as.Date('2018/01/31'))) +
+  ylab("Amikacin consumption (n)")+
+  xlab("Date") 
+plot_ab4
+
+
+```
+
+
+The Figures above are saved in 2 pdfs (page 1 and page 2) here. The code also contains the code to save them to a PDF file. 
+
+```{r, message=F, warning=F}
+
+layout <- rbind(c(1, 2),
+                c(3, 4),
+                c(5, 6))
+
+#pdf("figures/pdf/figure_1_page1.pdf", 10,8)
+#grid.arrange(plot_neo_adm, plot_sepsis_los, plot_maternal_normal, plot_sepsis_los_rate, plot_maternal_exit, plot_neo_mortality, layout_matrix=layout)
+#dev.off()
+
+#pdf("figures/pdf/figure_2_page2.pdf", 10,8)
+#grid.arrange(plot_blood, plot_ab0, plot_ab1, plot_ab2, plot_ab3, plot_ab4, layout_matrix=layout)
+#dev.off()
+
+png("figures/figure_1_tss_page1.png", width=10,height=8, units='in', res=300)
+grid.arrange(plot_neo_adm, plot_sepsis_los, plot_maternal_normal, plot_sepsis_los_rate, plot_maternal_exit, plot_neo_mortality, layout_matrix=layout)
+dev.off()
+
+png("figures/figure_2_tss_page2.png", width=10,height=8, units='in', res=300)
+grid.arrange(plot_blood, plot_ab0, plot_ab1, plot_ab2, plot_ab3, plot_ab4, layout_matrix=layout)
+dev.off()
+
+```
+
+
+
+Below every combination of alarm/indicator is plotted. As for the previous plots, there is also an option to output everything to a PDF file. 
+
+
+```{r, message=F, warning=F}
+
+# Redefine the  function stsplot_time1 from the Surveillance package in order to suit our needs.
+stsplot_time1_new <- function(
+    x, k=1, ylim=NULL, axes=TRUE, xaxis.tickFreq=list("%Q"=atChange),
+    xaxis.labelFreq=xaxis.tickFreq, xaxis.labelFormat="%G\n\n%OQ",
+    epochsAsDate=x@epochAsDate, xlab="time", ylab="No. infected", main=NULL,
+    type="s", lty=c(1,1,2), col=c(NA,1,4), lwd=c(1,1,1),
+    outbreak.symbol=list(pch=3, col=3, cex=1, lwd=1),
+    alarm.symbol=list(pch=24, col=2, cex=1, lwd=1),
+    dx.upperbound=0L, hookFunc=function(){}, .hookFuncInheritance=function() {}, la="a", ld='b',ldd='c',...)
+{
+  stopifnot(length(k) == 1, is.character(k) || k != 0)
+
+  #Extract slots -- depending on the algorithms: x@control$range
+  observed   <- x@observed[,k]
+  state      <- x@state[,k]
+  alarm      <- x@alarm[,k]
+  upperbound <- x@upperbound[,k]
+  population <- x@populationFrac[,k]
+  binaryTS <- x@multinomialTS
+
+  #Control what axis style is used
+  xaxis.dates <- !is.null(xaxis.labelFormat)
+
+  if (binaryTS) {
+    observed <- ifelse(population!=0,observed/population,0)
+    upperbound <- ifelse(population!=0,upperbound/population,0)
+    if (ylab == "No. infected") { ylab <- "Proportion infected" }
+  }
+
+  ##### Handle the NULL arguments ######################################
+  if (is.null(main) && length(x@control) > 0) {
+    #a surveillance algorithm has been run
+    action <- switch(class(x), "sts" = "surveillance",
+                     "stsNC" = "nowcasting","stsBP" = "backprojection")
+    method <- x@control$name
+    main <- paste0(action, " using ", method)
+  }
+
+  # control where the highest value is
+  max <- max(c(observed,upperbound),na.rm=TRUE)
+
+  #if ylim is not specified, give it a default value
+  if(is.null(ylim) ){
+    ylim <- c(-1/20*max, max)
+  }
+
+  # left/right help for constructing the columns
+  dx.observed <- 0.5
+  upperboundx <- (1:length(upperbound)) - (dx.observed - dx.upperbound)
+
+  #Generate the matrices to plot (values,last value)
+  xstuff <- cbind(c(upperboundx,length(observed) + min(1-(dx.observed - dx.upperbound),0.5)))
+  ystuff <-cbind(c(upperbound,upperbound[length(observed) ]))
+
+  #Plot the results
+  matplot(x=xstuff,y=ystuff,xlab=xlab,ylab=ylab,main=main,ylim=ylim,axes = !(xaxis.dates),type='s', lwd=3,...)
+
+  #This draws the polygons containing the number of counts (sep. by NA)
+  i <- rep(1:length(observed),each=5)
+  dx <- rep(dx.observed * c(-1,-1,1,1,NA), times=length(observed))
+  x.points <- i + dx
+  y.points <- as.vector(t(cbind(0, observed, observed, 0, NA)))
+  polygon(x.points,y.points,col=col2rgb('slategrey'),border=col[2],lwd=lwd[1])
+
+  #Draw upper bound once more in case the polygons are filled
+  
+  lines(x=xstuff,y=ystuff,type="s",main=main,lwd=3,...)
+
+  #Draw alarm symbols
+  alarmIdx <- which(!is.na(alarm) & (alarm == 1))
+  if (length(alarmIdx)>0) {
+    matpoints( alarmIdx, rep(-1/40*ylim[2],length(alarmIdx)), pch=alarm.symbol$pch, col=alarm.symbol$col, cex= alarm.symbol$cex, lwd=alarm.symbol$lwd)
+  }
+
+
+  #Label x-axis
+  if(xaxis.dates & axes) {
+    addFormattedXAxis(x = x, epochsAsDate = epochsAsDate, xaxis.tickFreq = xaxis.tickFreq,
+                      xaxis.labelFreq = xaxis.labelFreq, xaxis.labelFormat = xaxis.labelFormat,
+                      ...)
+  }
+  #Label y-axis
+  if (axes) {
+    axis( side=2 ,...)#cex=cex, cex.axis=cex.axis)
+  }
+  
+  legend( x="topright", 
+          legend=c(la, ld, ldd),
+          col=c("red", col[2], col[2]), 
+          lwd=c(NA, NA, 3), lty=c(NA, NA, lty[1]), pch=c(alarm.symbol$col, 22, NA), pt.bg=c(NA, col2rgb('slategrey'), NA))
+  
+  #Call hook function for user customized action using the current environment
+  environment(hookFunc) <- environment()
+  hookFunc()
+
+  #Extra hook functions for inheritance plotting (see e.g. plot function of stsNC objects)
+  environment(.hookFuncInheritance) <- environment()
+  .hookFuncInheritance()
+  invisible()
+}
+
+# Load the alarms and indicators
+alarms_loaded<- read.csv("data/alarmscomplete_from_py.txt")
+indicators_loaded<- read.csv("data/indicatorscomplete_from_py.txt")
+indicators <- matrix(c(dfs$sepsis_los_adm/df$neo_adm, df$neo_death/df$neo_exit, df$neo_death/df$neo_exit, dfs$sepsis_los_adm/df$neo_adm, df2$gn_bc_sample), ncol=5)
+
+# Makes sure alarms_loaded has proper column names
+names(alarms_loaded) <- c('LOSt', 
+       'LOSrt',
+       'LOSra',
+       'mt',
+       'ma',
+       'LOSi', 
+       'di')
+
+
+# Define a few labels needed for plotting 
+
+# Indicator label
+labels_i <- c('LO sepsis rate indicator', 
+       'Mortality indicator', 
+       'Future mortality indicator', 
+       'Future LO sepsis rate indicator',
+       'GNB positive blood culture indicator')
+
+# The units of the indicator
+units_i <- c('(%)',
+             '(%)',
+             '(%)',
+             '(%)',
+             '(n)')
+
+# Labels for the raw data (in histograms)
+labels_hist <- c('LO sepsis rate', 
+       'NCU Mortality', 
+       'NCU Mortality', 
+       'LO sepsis rate',
+       'GNB positive blood cultures')
+
+# Labels for the alarms
+labels_a <- c('LO sepsis threshold', 
+       'LO sepsis rate threshold',
+       'LO sepsis rate aberration',
+       'Mortality threshold',
+       'Mortality aberration',
+       'LO sepsis case differential', 
+       'Mortality differential')
+
+
+# The actual plotting
+
+for (j in 1:7){
+  for (i in 1:5){
+    
+    # Group things to plot
+    indicator_to_plot <- indicators_loaded[[i]]
+    labeli <- labels_i[i]
+    labela <- labels_a[j]
+    alarm_to_plot <- alarms_loaded[[j]]
+    indicator_to_hist <- indicators[,i]
+    
+    # Start the sts plot and add the proper alarm indicators
+    sts_to_plot <- sts(observed = indicator_to_hist, start=c(2014, 28))
+    alarms(sts_to_plot) <- matrix(alarm_to_plot)
+    upperbound(sts_to_plot) <- matrix(indicator_to_plot)
+    
+    #pdf(paste0("figures/alarms_pdf/a_", labela ,"_i_",labeli, ".pdf"), width=10,height=5.5)
+    #stsplot_time1_new(sts_to_plot, units=1, la=paste0(labela, " alarm"), ld=labels_hist[i], ldd=labeli, ylab=units_i[[i]], xlab='Date')
+    #dev.off()
+  
+    # Creates a figure for each combination. 
+    png(paste0("figures/alarms_png/a_", labela ,"_i_",labeli, ".png"), width=10,height=5.5,
+        units='in', res=300)
+    stsplot_time1_new(sts_to_plot, units=1, la=paste0(labela, " alarm"), ld=labels_hist[i], ldd=labeli, ylab=units_i[[i]], xlab='Date')
+    dev.off()
+  }
+}
+
+```

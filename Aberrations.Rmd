@@ -1,0 +1,196 @@
+---
+title: "Haiti Neonatal Sepsis Aberration Notebook"
+#output:
+#  pdf_document: default
+#  html_notebook: default
+---
+
+```{r loadlib, echo=T, results='hide', message=F, warning=F}
+library(fpp3)
+library(magrittr)
+library(dplyr)
+library(aweek)
+library(openxlsx)
+library(surveillance)
+
+
+# Control is used for the parameters of the extended Farrigton algorithm used as aberration detector
+control1 <-  list(range=208:416,reweight=T,
+                  noPeriods=1,populationOffset=T,
+                  fitFun="algo.farrington.fitGLM.flexible",
+                  b=3,w=3,weightsThreshold=1,
+                  pastWeeksNotIncluded=26,
+                  pThresholdTrend=0.05,trend=F,
+                  thresholdMethod="delta",alpha=0.05, limit54=c(0, 4))
+
+```
+
+
+
+We filter the times series and take only data between January 2014 to January 2018. Data is only available from July 2014 however. 
+
+Note that to detect aberrations in the data, we will use the same dataset as baseline. We are lucky since this can be achieved quite simply by duplicating and shifting the dataset. Of course, particular care should be taken when shifting so that an observation does not act as a baseline for itself. 
+
+
+```{r, message=F}
+
+# Load xlxs files, the original data has two patches, one for updated microbiology and one for updated sepsis onset data. 
+df <- read.xlsx('data/data.xlsx')
+df2 <- read.xlsx('data/data_micro_update.xlsx')
+dfs <- read.xlsx('data/data_sepsis_update.xlsx')
+
+
+# Define a date based on the epiweek
+df <- df %>% mutate(date= week2date(epiwk))
+df2 <- df2 %>% mutate(date= week2date(epiwk))
+dfs <- dfs%>% mutate(date= week2date(epiwk))
+
+# Rename the antibiotic use
+df <- df %>% mutate(ab1 = ampi_total+genta_total, 
+                    ab2= cefta_total,
+                    ab3 = amik_total,
+                    ab4 =  mero_total)
+
+# Time filter
+df <- df %>% filter(between(date, as.Date('2013-12-29'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+df2 <- df2 %>% filter(between(date, as.Date('2013-12-29'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+dfs <-  dfs %>% filter(between(date, as.Date('2013-12-29'), as.Date('2017-12-31') ) ) %>% replace(is.na(.),0)
+
+
+
+# Time series objects
+TSs <- df %>% as_tsibble()
+TSss <- dfs %>% as_tsibble()
+TSs2 <- df2 %>% as_tsibble()
+```
+
+These are the neonatal admissions and exits. A clear seasonality is present, but these time series are not that useful to detect sepsis outbreaks anyway. 
+
+```{r, message=F, warning=F}
+TSs %>% 
+  gg_season(neo_adm,labels = "both") +
+  scale_x_date(date_labels="%b",date_breaks  ="1 month") +
+  ylab("No. neonatal admissions")
+
+TSs %>% 
+  gg_season(neo_exit,labels = "both") +
+  scale_x_date(date_labels="%b",date_breaks  ="1 month") +
+  ylab("No. neonatal exits")
+```
+
+
+What is interesting to check are clear outbreaks in the sepsis admission rates. Here they are:
+
+```{r, message=F, warning=F}
+
+
+TSs %>% 
+  gg_season(sepsis_adm/neo_adm,labels = "both") +
+  scale_x_date(date_labels="%b",date_breaks  ="1 month") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Sepsis admission rate")
+
+ggplot(TSs) +  
+  geom_line(aes(x=date,y=sepsis_onset, group=1), color='black') +  
+  geom_line(aes(x=date,y=sepsis_eos, group = 2, colour = 'Early onset'),  linetype = "dashed") +    
+  geom_line(aes(x=date,y=sepsis_los, group = 3, colour = 'Late onset'),  linetype = "dashed") +   
+  ylab('No. sepsis onsets')+
+  xlab('Date') +
+  labs(color='Type') +
+  theme(legend.position = "top")
+
+```
+
+
+The early-onset cases have a suspicious activity around June 2016. This is not explained at the moment, but it might be due to different diagnostic criteria. 
+
+The next step is to look at the mortality data to see if these sepsis spikes are real or not. There is a strong correlation between late-onset sepsis patients and mortality, showing that these cases are exactly what we are after.
+
+
+```{r}
+
+TSs %>% autoplot(neo_death/neo_exit) + 
+  ylab('Neonatal mortality\n (neo_death/neo_exit)') + 
+  scale_y_continuous(labels = scales::percent)
+
+TSs %>% autoplot(sepsis_death/neo_death) + 
+  ylab('Sepsis death rate \n (sepsis_death/neo_death)') + 
+  scale_y_continuous(labels = scales::percent)
+
+TSs %>% autoplot(sepsis_death/neo_exit) + 
+  ylab('Sepsis mortality \n (sepsis_death/neo_exit)') + 
+  scale_y_continuous(labels = scales::percent)
+
+TSs %>% 
+  CCF(neo_death/neo_exit, sepsis_los, lag_max=5, type='correlation') %>% 
+  autoplot() +
+  labs(title='Cross-correlation  between mortality and LOS') +
+  xlim(c(-3, 3))
+
+TSs %>% 
+  CCF(neo_death/neo_exit, sepsis_eos, lag_max=5, type='correlation') %>% 
+  autoplot() + 
+  labs(title='Cross-correlation between mortality and EOS') +
+  xlim(c(-3, 3))
+
+
+
+TSs %>% 
+  CCF(sepsis_adm, sepsis_los, lag_max=5, type='correlation') %>% 
+  autoplot() + 
+  labs(title='Cross-correlation between LOS and sepsis admissions') +
+  xlim(c(-3, 3))
+
+TSs %>% 
+  ACF(neo_death, type='correlation', lag.max=5) %>% 
+  autoplot() + 
+  labs(title='Autocorrelation neonatal deaths')
+```
+
+
+We can estimate the duration of an outbreak by looking at the cross-correlation factors above. From the results, we assume that an outbreak has a typical duration of around 5 weeks. Notice that the precise value of this number does not particularly affect our results, since it is only used to define the window size of moving averages. 
+
+So, we now try to identify outbreaks as aberrations in neonatal deaths and in late-onset sepsis (LOS) cases. To control for population changes, in the first case we use the total neonatal exits, in the second case we use the neonatal admissions and in the third case we use two methods: all neonatal deaths or all neonatal exits. This population change correction is equivalent to studying rates instead of counts.
+ 
+A small caveat: using the admissions as population for the los onset time series might seem incorrect. While we expect a delay between admissions and the onset of sepsis, we verified that the correlation between the two peaks at a lag of 0 weeks. This means that in most cases sepsis develops less than one week from admission.
+
+
+```{r}
+
+# First, find mortality rate aberrations
+# Double the data to make sure we take the whole dataset as "baseline".  
+double1 <- append(df$neo_death, df$neo_death)
+double2 <- matrix(append(df$neo_exit, df$neo_exit))
+
+
+#Run aberration detection 
+sts_d <- sts(observed=double1, population=double2, start=c(2010, 1))
+trigger_d <- farringtonFlexible(sts_d,control=control1)
+
+#plot aberration detection
+plot(trigger_d, main='Neonatal death triggers (population corrected)', legend.opts=NULL, ylab='Number')
+
+
+# Repeat the process for LOS admission aberrations
+double1 <- append(dfs$sepsis_los_adm, dfs$sepsis_los_adm)
+double2 <- matrix(append(df$neo_adm, df$neo_adm))
+sts_s <- sts(observed=double1, population=double2, start=c(2010, 1))
+trigger_s <- farringtonFlexible(sts_s,control=control1)
+plot(trigger_s, main='Neonatal LOS triggers (population corrected)', legend.opts=NULL, ylab='Number')
+
+
+triggerdfs = as.data.frame(trigger_s)
+triggerdfd = as.data.frame(trigger_d)
+
+# The alarm time series need some padding, you can see this by viewing the alarms:
+#View(dfs %>% select(epiwk, sepsis_los))
+#View(triggerdf)
+
+alarmtss <-  append(tail(triggerdfs$alarm, -28), c(F, F))
+alarmtsd <- append( tail(triggerdfd$alarm, -28), c(F, F))
+
+# Save the alam time series to the used by the Python script
+write.table(as.integer(alarmtss), file="data/alarmss.txt", row.names=FALSE, col.names=FALSE)
+write.table(as.integer(alarmtsd), file="data/alarmsd.txt", row.names=FALSE, col.names=FALSE)
+
+```
